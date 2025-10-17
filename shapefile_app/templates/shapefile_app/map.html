@@ -1,0 +1,311 @@
+{% extends 'shapefile_app/base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-header">
+                <h5>Layers</h5>
+            </div>
+            <div class="card-body">
+                <div id="layer-control">
+                    {% for shapefile in shapefiles %}
+                    <div class="form-check mb-2">
+                        <input class="form-check-input layer-checkbox" 
+                            type="checkbox" 
+                            value="{{ shapefile.id }}" 
+                            id="layer{{ shapefile.id }}"
+                            data-layer-type="original"
+                            checked>
+                        <label class="form-check-label" for="layer{{ shapefile.id }}">
+                            {{ shapefile.name }} (Original)
+                        </label>
+                    </div>
+                    
+                    {% if shapefile.geojson_data_processed %}
+                    <div class="form-check mb-2 ms-3">
+                        <input class="form-check-input layer-checkbox" 
+                            type="checkbox" 
+                            value="{{ shapefile.id }}" 
+                            id="layer{{ shapefile.id }}_processed"
+                            data-layer-type="processed"
+                            checked>
+                        <label class="form-check-label" for="layer{{ shapefile.id }}_processed">
+                            {{ shapefile.name }} (Processed)
+                        </label>
+                    </div>
+                    {% endif %}
+                    
+                    <div class="mb-2">
+                        <a href="{% url 'debug_shapefile' shapefile.id %}" class="btn btn-sm btn-outline-info" target="_blank">
+                            Debug
+                        </a>
+                    </div>
+                    <hr>
+                    {% empty %}
+                    <p>No shapefiles uploaded yet.</p>
+                    {% endfor %}
+                </div>
+                <a href="{% url 'upload_shapefile' %}" class="btn btn-primary mt-3">Upload New Shapefile</a>
+                
+                <!-- Debug info -->
+                <div class="mt-3 small text-muted">
+                    <p><strong>CRS Info:</strong> Shapefiles are transformed to WGS84 (EPSG:4326) and displayed in Web Mercator (EPSG:3857)</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-9">
+        <div id="map"></div>
+    </div>
+</div>
+
+<!-- OpenLayers CSS and JS -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@8.2.0/ol.css">
+<script src="https://cdn.jsdelivr.net/npm/ol@8.2.0/dist/ol.js"></script>
+
+<script>
+// Western Australia bounds (approximate)
+const WA_BOUNDS = [
+    [112.5, -35.5], // Southwest
+    [129.0, -13.5]  // Northeast
+];
+
+// Initialize map centered on Western Australia
+const map = new ol.Map({
+    target: 'map',
+    layers: [
+        new ol.layer.Tile({
+            source: new ol.source.OSM()
+        })
+    ],
+    view: new ol.View({
+        center: ol.proj.fromLonLat([120.5, -24.5]), // Center of WA
+        zoom: 6
+    })
+});
+
+// Fit map to Western Australia bounds on initial load
+const waExtent = ol.proj.transformExtent([
+    WA_BOUNDS[0][0], WA_BOUNDS[0][1], // min lon, min lat
+    WA_BOUNDS[1][0], WA_BOUNDS[1][1]  // max lon, max lat
+], 'EPSG:4326', 'EPSG:3857');
+
+map.getView().fit(waExtent, { padding: [50, 50, 50, 50] });
+
+// Function to load and display shapefile
+// Handle layer checkbox changes
+// Store layer references
+const shapefileLayers = {};
+
+// Function to load and display shapefile
+function loadShapefile(shapefileId, layerType = 'original') {
+    const layerKey = `${shapefileId}_${layerType}`;
+    
+    if (shapefileLayers[layerKey]) {
+        // Layer already exists, just show it
+        shapefileLayers[layerKey].setVisible(true);
+        zoomToLayer(shapefileLayers[layerKey]);
+        return;
+    }
+
+    const url = layerType === 'processed' 
+        ? `/shapefile/${shapefileId}/geojson/processed/`
+        : `/shapefile/${shapefileId}/geojson/`;
+
+    fetch(url)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(geojsonData => {
+            console.log(`GeoJSON ${layerType} data received:`, geojsonData);
+            
+            // Use GeoJSON format with explicit data projection
+            const vectorSource = new ol.source.Vector({
+                features: new ol.format.GeoJSON().readFeatures(geojsonData, {
+                    dataProjection: 'EPSG:4326',  // Source data is in WGS84
+                    featureProjection: 'EPSG:3857' // Map is in Web Mercator
+                })
+            });
+
+            // Different styles for original vs processed layers
+            const style = layerType === 'processed' 
+                ? new ol.style.Style({
+                    stroke: new ol.style.Stroke({
+                        color: 'red',
+                        width: 3
+                    }),
+                    fill: new ol.style.Fill({
+                        color: 'rgba(255, 0, 0, 0.2)'
+                    })
+                })
+                : new ol.style.Style({
+                    stroke: new ol.style.Stroke({
+                        color: 'blue',
+                        width: 2
+                    }),
+                    fill: new ol.style.Fill({
+                        color: 'rgba(0, 0, 255, 0.1)'
+                    })
+                });
+
+            const vectorLayer = new ol.layer.Vector({
+                source: vectorSource,
+                style: style
+            });
+
+            map.addLayer(vectorLayer);
+            shapefileLayers[layerKey] = vectorLayer;
+
+            // Zoom to shapefile extent
+            zoomToLayer(vectorLayer);
+            
+            console.log(`Loaded ${vectorSource.getFeatures().length} features for ${layerType} layer`);
+            console.log('Layer extent:', vectorSource.getExtent());
+        })
+        .catch(error => {
+            console.error(`Error loading ${layerType} shapefile:`, error);
+            // Show error to user
+            alert(`Error loading ${layerType} layer: ${error.message}`);
+        });
+}
+
+// Function to remove shapefile layer
+function removeShapefile(shapefileId, layerType = 'original') {
+    const layerKey = `${shapefileId}_${layerType}`;
+    if (shapefileLayers[layerKey]) {
+        map.removeLayer(shapefileLayers[layerKey]);
+        delete shapefileLayers[layerKey];
+        
+        // If no layers left, zoom back to WA bounds
+        if (Object.keys(shapefileLayers).length === 0) {
+            map.getView().fit(waExtent, { 
+                padding: [50, 50, 50, 50],
+                duration: 1000
+            });
+        }
+    }
+}
+
+// Function to zoom to a specific layer
+function zoomToLayer(layer) {
+    const source = layer.getSource();
+    const extent = source.getExtent();
+    
+    console.log('Zooming to extent:', extent);
+    
+    if (!ol.extent.isEmpty(extent)) {
+        map.getView().fit(extent, {
+            padding: [50, 50, 50, 50],
+            maxZoom: 15,
+            duration: 1000
+        });
+    } else {
+        console.warn('Empty extent - cannot zoom');
+        // Fallback: zoom to Western Australia
+        map.getView().fit(waExtent, { 
+            padding: [50, 50, 50, 50],
+            duration: 1000
+        });
+    }
+}
+
+// Handle layer checkbox changes
+document.addEventListener('change', function(e) {
+    if (e.target.classList.contains('layer-checkbox')) {
+        const shapefileId = e.target.value;
+        const layerType = e.target.dataset.layerType;
+        const layerKey = `${shapefileId}_${layerType}`;
+        
+        if (e.target.checked) {
+            loadShapefile(shapefileId, layerType);
+        } else {
+            removeShapefile(shapefileId, layerType);
+        }
+    }
+});
+
+// Load all checked layers initially
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.layer-checkbox:checked').forEach(checkbox => {
+        const shapefileId = checkbox.value;
+        const layerType = checkbox.dataset.layerType;
+        loadShapefile(shapefileId, layerType);
+    });
+
+    // Auto-zoom to newly uploaded shapefile
+    const urlParams = new URLSearchParams(window.location.search);
+    const zoomToId = urlParams.get('zoom_to');
+    
+    if (zoomToId) {
+        // Remove any existing layers first
+        Object.keys(shapefileLayers).forEach(layerKey => {
+            if (layerKey.startsWith(`${zoomToId}_`)) {
+                const [shapefileId, layerType] = layerKey.split('_');
+                removeShapefile(shapefileId, layerType);
+            }
+        });
+        
+        // Wait a bit for the DOM to update, then load and zoom
+        setTimeout(() => {
+            const originalCheckbox = document.getElementById(`layer${zoomToId}`);
+            if (originalCheckbox) {
+                originalCheckbox.checked = true;
+                loadShapefile(zoomToId, 'original');
+            }
+        }, 500);
+        
+        // Clean up URL
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+    }
+});
+
+document.querySelectorAll('.layer-checkbox').forEach(checkbox => {
+    checkbox.addEventListener('change', function() {
+        const shapefileId = this.value;
+        if (this.checked) {
+            loadShapefile(shapefileId);
+        } else {
+            removeShapefile(shapefileId);
+        }
+    });
+});
+
+// Load all shapefiles initially
+document.querySelectorAll('.layer-checkbox:checked').forEach(checkbox => {
+    loadShapefile(checkbox.value);
+});
+
+// Auto-zoom to newly uploaded shapefile
+document.addEventListener('DOMContentLoaded', function() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const zoomToId = urlParams.get('zoom_to');
+    
+    if (zoomToId) {
+        // Remove any existing layer first
+        if (shapefileLayers[zoomToId]) {
+            removeShapefile(zoomToId);
+        }
+        
+        // Wait a bit for the DOM to update, then load and zoom
+        setTimeout(() => {
+            const checkbox = document.getElementById(`layer${zoomToId}`);
+            if (checkbox) {
+                checkbox.checked = true;
+                loadShapefile(zoomToId);
+            }
+        }, 500);
+        
+        // Clean up URL
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+    }
+});
+
+</script>
+{% endblock %}
