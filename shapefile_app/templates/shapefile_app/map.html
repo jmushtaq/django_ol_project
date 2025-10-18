@@ -6,6 +6,7 @@
   <title>Shapefile Viewer</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@8.2.0/ol.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
   <style>
     .map {
       width: 100%;
@@ -13,15 +14,14 @@
     }
     .layer-control {
       position: absolute;
-      top: 4.5em;
-      left: 0.5em;
-      background: rgba(255, 255, 255, 0.8);
+      top: 8.5em;
+      left: 3.5em;
+      background: rgba(255, 255, 255, 0.9);
       border: 1px solid #ccc;
       border-radius: 4px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.2);
       z-index: 1000;
       max-width: 250px;
-      backdrop-filter: blur(5px);
     }
     .layer-control-header {
       padding: 0.5em;
@@ -54,6 +54,30 @@
       font-size: 0.7em;
       padding: 0.2em 0.5em;
     }
+    .layer-toggle {
+      position: absolute;
+      top: 9.5em;
+      left: 1.0em;
+      z-index: 1000;
+    }
+    .layer-toggle-btn {
+      background: rgba(255, 255, 255, 0.9);
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      width: 2em;
+      height: 2em;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    .layer-toggle-btn:hover {
+      background: white;
+    }
+    .bi-layers {
+      font-size: 1em;
+    }
   </style>
 </head>
 <body>
@@ -70,7 +94,15 @@
     <div id="map" class="map"></div>
   </div>
 
-  <div id="layer-control" class="layer-control">
+  <!-- Layer Toggle Icon -->
+  <div class="layer-toggle">
+    <div class="layer-toggle-btn" id="layer-toggle-btn" title="Toggle Layers">
+      <i class="bi bi-layers"></i>
+    </div>
+  </div>
+
+  <!-- Layer Control Panel (hidden by default) -->
+  <div id="layer-control" class="layer-control" style="display: none;">
     <div class="layer-control-header">
       Layers
     </div>
@@ -91,7 +123,7 @@
           </div>
           
           {% if shapefile.geojson_data_processed %}
-          <div class="form-check">
+          <div class="form-check ms-3">
             <input class="form-check-input layer-checkbox" 
                    type="checkbox" 
                    value="{{ shapefile.id }}" 
@@ -104,24 +136,20 @@
           </div>
           {% endif %}
           
-<!--
           <div class="mt-1">
             <a href="{% url 'debug_shapefile' shapefile.id %}" class="btn btn-sm btn-outline-info" target="_blank">
               Debug
             </a>
           </div>
--->
         </div>
         {% empty %}
         <p class="text-muted small">No shapefiles uploaded yet.</p>
         {% endfor %}
       </div>
       
-<!--
       <div class="mt-3">
         <a href="{% url 'upload_shapefile' %}" class="btn btn-primary btn-sm w-100">Upload New Shapefile</a>
       </div>
--->
     </div>
   </div>
 
@@ -143,7 +171,6 @@
         center: ol.proj.fromLonLat([120.5, -24.5]),
         zoom: 6
       })
-      // Note: Zoom controls are added by default at top-left
     });
 
     // Fit map to Western Australia bounds
@@ -152,6 +179,25 @@
 
     // Store layer references
     const shapefileLayers = {};
+
+    // Layer control toggle functionality
+    const layerToggleBtn = document.getElementById('layer-toggle-btn');
+    const layerControl = document.getElementById('layer-control');
+
+    layerToggleBtn.addEventListener('click', function() {
+      if (layerControl.style.display === 'none') {
+        layerControl.style.display = 'block';
+      } else {
+        layerControl.style.display = 'none';
+      }
+    });
+
+    // Close layer control when clicking outside
+    document.addEventListener('click', function(event) {
+      if (!layerControl.contains(event.target) && !layerToggleBtn.contains(event.target)) {
+        layerControl.style.display = 'none';
+      }
+    });
 
     // Function to load and display shapefile
     function loadShapefile(shapefileId, layerType = 'original') {
