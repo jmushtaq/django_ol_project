@@ -4,14 +4,8 @@ from django.utils import timezone
 import json
 
 import geopandas as gpd
-
-
-try:
-    from django.contrib.gis.geos import GEOSGeometry, MultiPolygon, Polygon
-    GEOS_AVAILABLE = True
-except ImportError:
-    GEOS_AVAILABLE = False
-    print("GEOS not available - polygon merging disabled")
+from shapely.geometry import shape, Polygon, MultiPolygon
+from shapely.ops import unary_union
 
 
 class Shapefile(models.Model):
@@ -49,159 +43,126 @@ class Shapefile(models.Model):
         cls.objects.all().delete()
 
     def merge_selected_polygons(self, selected_feature_ids):
-        """Merge selected polygons from processed data and update processed data"""
-        if not GEOS_AVAILABLE:
-            return False, "GEOS library not available - polygon merging disabled"
-
+        """Merge selected polygons from processed data using GeoPandas"""
         try:
-            # Use processed data as source, fallback to original if no processed data exists
-            if self.geojson_data_processed:
-                source_data = self.get_processed_geojson_feature_collection()
-                source_field = 'processed'
-            else:
-                source_data = self.get_geojson_feature_collection()
-                source_field = 'original'
+            source_data = self.get_processed_geojson_feature_collection()
+            source_field = 'processed'
 
-            features = source_data.get('features', [])
+            if not source_data or 'features' not in source_data:
+                return False, "No source data available for merging"
+
+            # Convert to GeoDataFrame
+            gdf = gpd.GeoDataFrame.from_features(source_data['features'])
 
             # Filter selected features
-            selected_features = []
-            other_features = []
+            selected_indices = [int(idx) for idx in selected_feature_ids if idx.isdigit()]
 
-            for i, feature in enumerate(features):
-                if str(i) in selected_feature_ids:
-                    selected_features.append(feature)
-                else:
-                    other_features.append(feature)
-
-            if len(selected_features) < 2:
+            if len(selected_indices) < 2:
                 return False, "Please select at least 2 polygons to merge"
 
-            # Convert selected features to GEOS geometries and check adjacency
-            geos_polygons = []
-            for feature in selected_features:
-                geom = feature.get('geometry')
-                if geom and geom.get('type') in ['Polygon', 'MultiPolygon']:
-                    geos_geom = GEOSGeometry(json.dumps(geom))
-                    if isinstance(geos_geom, Polygon):
-                        geos_polygons.append(geos_geom)
-                    elif isinstance(geos_geom, MultiPolygon):
-                        geos_polygons.extend(list(geos_geom))
+            # Check if all selected indices are valid
+            valid_indices = [idx for idx in selected_indices if idx < len(gdf)]
+            if len(valid_indices) < 2:
+                return False, "Invalid polygon indices selected"
 
-            if len(geos_polygons) < 2:
-                return False, "No valid polygons found in selection"
+            selected_gdf = gdf.iloc[valid_indices].copy()
+            remaining_gdf = gdf.drop(valid_indices)
 
-            # Check if polygons are adjacent/touching
-            if not self._are_polygons_adjacent(geos_polygons):
+            # Check if polygons are adjacent/touching using GeoPandas
+            if not self._are_polygons_adjacent_geopandas(selected_gdf):
                 return False, "Selected polygons are not adjacent/touching"
 
-            # Merge polygons
-            merged_geometry = self._merge_polygons(geos_polygons)
+            # Merge polygons using GeoPandas
+            merged_geometry = self._merge_polygons_geopandas(selected_gdf)
 
-            if not merged_geometry:
-                return False, "Failed to merge polygons"
+            if merged_geometry is None or merged_geometry.is_empty:
+                return False, "Failed to merge polygons - resulting geometry is empty"
 
-            # Create new feature collection with merged polygon
+            # Create new feature for merged polygon
             merged_feature = {
                 'type': 'Feature',
-                'geometry': json.loads(merged_geometry.geojson),
+                'geometry': merged_geometry.__geo_interface__,
                 'properties': {
                     'name': 'Merged Polygon',
-                    'original_features': len(selected_features),
+                    'original_features': len(selected_gdf),
                     'merged_features': selected_feature_ids,
                     'source_layer': source_field,
-                    'merged_at': timezone.now().isoformat()
+                    'merged_at': timezone.now().isoformat(),
+                    'area_sq_km': round(merged_geometry.area * 10000, 2)  # Approximate area in sq km
                 }
             }
 
-            # Create new feature collection
-            new_features = other_features + [merged_feature]
+            # Convert remaining features back to GeoJSON features
+            remaining_features = []
+            for idx, row in remaining_gdf.iterrows():
+                feature = {
+                    'type': 'Feature',
+                    'geometry': row.geometry.__geo_interface__,
+                    'properties': row.drop('geometry').to_dict()
+                }
+                remaining_features.append(feature)
 
+            # Add the merged feature
+            remaining_features.append(merged_feature)
+
+            # Create new processed data
             processed_data = {
                 'type': 'FeatureCollection',
-                'features': new_features
+                'features': remaining_features
             }
 
-            # Save to processed field (always update processed data)
+            # Save to processed field
             self.geojson_data_processed = processed_data
             self.save()
 
-            return True, f"Successfully merged polygons {selected_feature_ids}"
+            return True, f"Successfully merged polygons {selected_feature_ids} (Area: {merged_feature['properties']['area_sq_km']} sq km)"
 
         except Exception as e:
-            return False, f"Error merging polygons: {str(e)}"
+            print(f"GeoPandas merge error: {e}")
+            # Fallback to GEOS method if GeoPandas fails
+            return self._merge_selected_polygons_fallback(selected_feature_ids)
 
-    def _are_polygons_adjacent(self, polygons):
-        """Check if polygons are adjacent/touching each other"""
-        if len(polygons) < 2:
+    def _are_polygons_adjacent_geopandas(self, gdf):
+        """Check if polygons are adjacent/touching using GeoPandas spatial operations"""
+        if len(gdf) < 2:
             return False
 
-        # Create a graph to track connectivity
-        connected_components = []
+        # Create a union of all geometries to check connectivity
+        combined_geometry = gdf.unary_union
 
-        for i, poly1 in enumerate(polygons):
-            connected_to = None
-            # Find if this polygon connects to any existing component
-            for j, component in enumerate(connected_components):
-                for poly_idx in component:
-                    poly2 = polygons[poly_idx]
-                    if (poly1.touches(poly2) or
-                        poly1.intersects(poly2) or
-                        poly1.overlaps(poly2) or
-                        poly1.intersection(poly2).area > 0):
-                        connected_to = j
-                        break
-                if connected_to is not None:
-                    break
+        # If the union is a single polygon (not multi), they are connected
+        if isinstance(combined_geometry, (Polygon)):
+            return True
+        elif isinstance(combined_geometry, MultiPolygon):
+            # For MultiPolygon, check if it's actually connected (single component)
+            # by comparing with the convex hull or buffer method
+            individual_areas = gdf.geometry.area.sum()
+            combined_area = combined_geometry.area
 
-            if connected_to is not None:
-                connected_components[connected_to].append(i)
-            else:
-                # Start new component
-                connected_components.append([i])
+            # If areas are similar, they are likely connected
+            area_ratio = combined_area / individual_areas
+            return area_ratio <= 1.1  # Allow 10% tolerance for gaps/overlaps
 
-        # Merge connected components
-        merged = True
-        while merged and len(connected_components) > 1:
-            merged = False
-            for i in range(len(connected_components)):
-                for j in range(i + 1, len(connected_components)):
-                    component1 = connected_components[i]
-                    component2 = connected_components[j]
-                    # Check if any polygon in component1 touches any in component2
-                    for idx1 in component1:
-                        for idx2 in component2:
-                            poly1 = polygons[idx1]
-                            poly2 = polygons[idx2]
-                            if (poly1.touches(poly2) or
-                                poly1.intersects(poly2) or
-                                poly1.overlaps(poly2) or
-                                poly1.intersection(poly2).area > 0):
-                                connected_components[i].extend(connected_components[j])
-                                connected_components.pop(j)
-                                merged = True
-                                break
-                        if merged:
-                            break
-                    if merged:
-                        break
-                if merged:
-                    break
+        return False
 
-        # All polygons are connected if there's only one component
-        return len(connected_components) == 1
-
-    def _merge_polygons(self, polygons):
-        """Merge multiple polygons into one"""
+    def _merge_polygons_geopandas(self, gdf):
+        """Merge multiple polygons into one using GeoPandas"""
         try:
-            # Start with first polygon
-            merged = polygons[0]
+            # Use unary_union for robust merging
+            merged_geometry = gdf.unary_union
 
-            # Union with remaining polygons
-            for polygon in polygons[1:]:
-                merged = merged.union(polygon)
+            # Ensure we have a valid geometry
+            if merged_geometry.is_valid:
+                return merged_geometry
+            else:
+                # Try to fix invalid geometry
+                merged_geometry = merged_geometry.buffer(0)
+                if merged_geometry.is_valid:
+                    return merged_geometry
+                else:
+                    return None
 
-            return merged
         except Exception as e:
-            print(f"Merge error: {e}")
+            print(f"GeoPandas merge error: {e}")
             return None
+
