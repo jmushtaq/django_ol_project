@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from confy import env, database
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
@@ -9,6 +10,12 @@ SECRET_KEY = 'django-insecure-your-secret-key-here'
 DEBUG = True
 
 ALLOWED_HOSTS = []
+
+# Use 'epsg:4326' as projected coordinate system - 'epcg:4326' coordinate system is in meters (Then the buffer distance will be in meters)
+CRS = env('CRS', 'epsg:4326')
+CRS_CARTESIAN = env('CRS_CARTESIAN', 'epsg:3043')
+CRS_GDA94 = env('CRS_GDA94', 'epsg:28350')
+OGR2OGR = env('OGR2OGR', '/usr/bin/ogr2ogr')
 
 INSTALLED_APPS = [
     'django.contrib.admin',

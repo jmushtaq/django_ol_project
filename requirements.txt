@@ -3,3 +3,5 @@ django-geojson==4.2.0
 gdal==3.9.3
 django_extensions==4.1
 geopandas==1.1.1
+django-confy==1.0.4
+matplotlib==3.10.6

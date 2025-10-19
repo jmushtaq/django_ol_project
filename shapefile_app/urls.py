@@ -1,10 +1,12 @@
 from django.urls import path
 from . import views
-#from shapefile_app import views
+#from .views import MapView, ShapefileUploadView, ShapefileGeoJSONView, DebugShapefileView, ShapefileProcessedGeoJSONView, MergePolygonsView
 
 urlpatterns = [
-    path('', views.map_view, name='map_view'),
-    path('upload/', views.upload_shapefile, name='upload_shapefile'),
-    path('shapefile/<int:shapefile_id>/geojson/', views.get_shapefile_geojson, name='get_shapefile_geojson'),
-    path('debug/<int:shapefile_id>/', views.debug_shapefile, name='debug_shapefile'),  # Add this line
+    path('', views.MapView.as_view(), name='map_view'),
+    path('upload/', views.ShapefileUploadView.as_view(), name='upload_shapefile'),
+    path('shapefile/<int:pk>/geojson/', views.ShapefileGeoJSONView.as_view(), name='get_shapefile_geojson'),
+    path('shapefile/<int:pk>/geojson/processed/', views.ShapefileProcessedGeoJSONView.as_view(), name='get_shapefile_geojson_processed'),
+    path('shapefile/<int:pk>/merge/', views.MergePolygonsView.as_view(), name='merge_polygons'),
+    path('debug/<int:pk>/', views.DebugShapefileView.as_view(), name='debug_shapefile'),
 ]
