@@ -8,6 +8,7 @@ from shapely.geometry import shape, Polygon, MultiPolygon
 from shapely.ops import unary_union
 
 
+
 class Shapefile(models.Model):
     name = models.CharField(max_length=255)
     geojson_data = models.JSONField(default=dict)
