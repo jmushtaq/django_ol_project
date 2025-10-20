@@ -5,6 +5,7 @@ from django.contrib.gis.geos import GEOSGeometry, MultiPolygon, Polygon
 from django.utils import timezone
 import json
 
+import pandas as pd
 import geopandas as gpd
 from shapely.geometry import shape, Polygon, MultiPolygon, LineString
 from shapely.ops import unary_union
@@ -198,15 +199,16 @@ class Shapefile(models.Model):
 
             #cut_line = [[115.9108077401263, -34.15361264163583], [115.9148041754924, -34.15477445913835]]
             gdf_single = gdf.iloc[[feature_idx]]
-            gdf_excl_single = gpd.overlay(gdf_single, gdf, how='symmetric_difference')
+            #gdf_excl_single = gpd.overlay(gdf_single, gdf, how='symmetric_difference')
+            gdf_excl_single = gdf.drop(feature_idx)
 
             polygon_single = gdf_single.iloc[0].geometry
             split_result = split(polygon_single, linestring)
             partitioned_polygons = list(split_result.geoms)
             gdf_partitioned = gpd.GeoDataFrame(geometry=partitioned_polygons)
+            gdf_partitioned.set_crs(gdf.crs, inplace=True)
             #plot_gdf(gdf_partitioned)
 
-            import ipdb; ipdb.set_trace()
             # Debug: print what we got from the split
             if len(gdf_partitioned) < 2:
                 return False, f"Cut operation produced only {len(gdf_partitioned)} valid polygon(s)."
@@ -215,14 +217,15 @@ class Shapefile(models.Model):
             print(gdf_partitioned)
 
             for idx, row in gdf_partitioned.iterrows():
-                row['cut_part'] = i + 1
+                row['cut_part'] = idx + 1
                 row['original_feature'] = feature_id
-                row['area'] = round(row.area, 2)
+                row['area'] = round(row.geometry.area, 2)
 
             # Save to processed field
             #self.geojson_data_processed = processed_data
+            #import ipdb; ipdb.set_trace()
             gdf_rejoin = gpd.GeoDataFrame(pd.concat([gdf_partitioned, gdf_excl_single], ignore_index=True))
-            self.geojson_data_processed = json.loads(gdf.set_crs(settings.CRS).to_json())
+            self.geojson_data_processed = json.loads(gdf_rejoin.set_crs(settings.CRS).to_json())
             self.save()
 
             return True, f"Successfully cut polygon {feature_id} into {len(gdf_partitioned)} parts)"

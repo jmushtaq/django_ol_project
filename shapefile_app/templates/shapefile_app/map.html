@@ -519,7 +519,8 @@
 
                 // Add feature IDs and metadata for selection
                 vectorSource.getFeatures().forEach((feature, index) => {
-                    feature.set('featureId', index.toString());
+                    //feature.set('featureId', index.toString());
+                    feature.set('featureId', feature.id_.toString());
                     feature.set('shapefileId', shapefileId.toString());
                     feature.set('layerType', layerType);
                 });
