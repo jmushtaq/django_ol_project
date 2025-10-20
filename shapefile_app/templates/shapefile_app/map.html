@@ -271,7 +271,7 @@
                    value="{{ shapefile.id }}" 
                    id="layer{{ shapefile.id }}"
                    data-layer-type="original"
-                   checked>
+                   >
             <label class="form-check-label" for="layer{{ shapefile.id }}">
               {{ shapefile.name }} (O)
             </label>
@@ -865,7 +865,7 @@
         `;
     }
 
-    // Function to check if only one layer is visible
+    // Function to check if only one layer is visible (keep existing)
     function getVisibleLayersCount() {
         let count = 0;
         Object.values(shapefileLayers).forEach(layer => {
@@ -938,52 +938,128 @@
         const annotationKey = `${shapefileId}_${layerType}_annotations`;
         const annotationSource = new ol.source.Vector();
         
-        const features = sourceLayer.getSource().getFeatures();
+        // Fetch the original GeoJSON to get the actual feature data from the API
+        const url = layerType === 'processed' 
+            ? `/shapefile/${shapefileId}/geojson/processed/`
+            : `/shapefile/${shapefileId}/geojson/`;
         
-        features.forEach((feature, index) => {
-            const geometry = feature.getGeometry();
-            const representativePoint = getRepresentativePoint(geometry);
-            
-            // Create point feature for annotation
-            const pointFeature = new ol.Feature({
-                geometry: new ol.geom.Point(representativePoint),
-                index: index,
-                shapefileId: shapefileId,
-                layerType: layerType
-            });
-            
-            annotationSource.addFeature(pointFeature);
-        });
-
-        const annotationLayer = new ol.layer.Vector({
-            source: annotationSource,
-            style: function(feature) {
-                const index = feature.get('index');
-                return new ol.style.Style({
-                    text: new ol.style.Text({
-                        text: index.toString(),
-                        font: 'bold 14px Arial',
-                        fill: new ol.style.Fill({
-                            color: layerType === 'processed' ? '#ff0000' : '#0000ff'
-                        }),
-                        stroke: new ol.style.Stroke({
-                            color: '#ffffff',
-                            width: 3
-                        }),
-                        offsetY: 0,
-                        textAlign: 'center',
-                        textBaseline: 'middle'
-                    })
+        fetch(url)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(geojsonData => {
+                if (!geojsonData || !geojsonData.features) {
+                    console.log('No GeoJSON features found');
+                    return;
+                }
+                
+                console.log(`Creating annotations for ${geojsonData.features.length} features from API`);
+                console.log('Sample feature:', geojsonData.features[0]);
+                
+                // Create annotations directly from the GeoJSON features
+                geojsonData.features.forEach((feature, index) => {
+                    if (!feature.geometry) return;
+                    
+                    // Get the actual feature ID - try multiple possible sources
+                    let actualFeatureId = index; // Default to index
+                    
+                    // Try to get ID from feature properties
+                    if (feature.properties) {
+                        // Look for common ID fields in properties
+                        if (feature.properties.id !== undefined) {
+                            actualFeatureId = feature.properties.id;
+                        } else if (feature.properties.ID !== undefined) {
+                            actualFeatureId = feature.properties.ID;
+                        } else if (feature.properties.fid !== undefined) {
+                            actualFeatureId = feature.properties.fid;
+                        } else if (feature.properties.FID !== undefined) {
+                            actualFeatureId = feature.properties.FID;
+                        } else if (feature.properties.ogc_fid !== undefined) {
+                            actualFeatureId = feature.properties.ogc_fid;
+                        }
+                        // For cut polygons, use the original feature ID
+                        else if (feature.properties.original_feature !== undefined) {
+                            actualFeatureId = feature.properties.original_feature;
+                        }
+                        // For merged polygons, show merged info
+                        else if (feature.properties.merged_features !== undefined) {
+                            actualFeatureId = `M(${feature.properties.merged_features.length})`;
+                        }
+                    }
+                    
+                    // Use feature.id as last resort
+                    if (feature.id !== undefined && feature.id !== null) {
+                        actualFeatureId = feature.id;
+                    }
+                    
+                    // Convert GeoJSON geometry to OpenLayers geometry
+                    const olGeometry = new ol.format.GeoJSON().readGeometry(feature.geometry, {
+                        dataProjection: 'EPSG:4326',
+                        featureProjection: 'EPSG:3857'
+                    });
+                    
+                    const representativePoint = getRepresentativePoint(olGeometry);
+                    
+                    // Create point feature for annotation
+                    const pointFeature = new ol.Feature({
+                        geometry: new ol.geom.Point(representativePoint),
+                        index: actualFeatureId,  // Use the actual feature ID from API
+                        shapefileId: shapefileId,
+                        layerType: layerType,
+                        originalProperties: feature.properties // Store for debugging
+                    });
+                    
+                    annotationSource.addFeature(pointFeature);
                 });
-            },
-            zIndex: 1000 // Ensure annotations appear above polygons
-        });
 
-        map.addLayer(annotationLayer);
-        shapefileLayers[annotationKey] = annotationLayer;
-        
-        console.log(`Created annotations for ${features.length} features in ${layerType} layer`);
+                const annotationLayer = new ol.layer.Vector({
+                    source: annotationSource,
+                    style: function(feature) {
+                        const index = feature.get('index');
+                        return new ol.style.Style({
+                            text: new ol.style.Text({
+                                text: index.toString(),
+                                font: 'bold 14px Arial',
+                                fill: new ol.style.Fill({
+                                    color: layerType === 'processed' ? '#ff0000' : '#0000ff'
+                                }),
+                                stroke: new ol.style.Stroke({
+                                    color: '#ffffff',
+                                    width: 3
+                                }),
+                                offsetY: 0,
+                                textAlign: 'center',
+                                textBaseline: 'middle'
+                            })
+                        });
+                    },
+                    zIndex: 1000 // Ensure annotations appear above polygons
+                });
+
+                map.addLayer(annotationLayer);
+                shapefileLayers[annotationKey] = annotationLayer;
+                
+                console.log(`Created annotations for ${geojsonData.features.length} features in ${layerType} layer using actual feature IDs`);
+                console.log('Annotation IDs:', geojsonData.features.map((f, i) => {
+                    let id = i;
+                    if (f.properties) {
+                        if (f.properties.id !== undefined) id = f.properties.id;
+                        else if (f.properties.original_feature !== undefined) id = f.properties.original_feature;
+                    }
+                    if (f.id !== undefined) id = f.id;
+                    return id;
+                }));
+            })
+            .catch(error => {
+                console.error(`Error fetching GeoJSON for annotations:`, error);
+                // Fallback: use OpenLayers feature indices if API fails
+                createFallbackAnnotations(shapefileId, layerType, sourceLayer.getSource().getFeatures(), annotationSource, annotationKey);
+            });
     }
+
 
     // Annotation toggle functionality
     let annotationsEnabled = true;
