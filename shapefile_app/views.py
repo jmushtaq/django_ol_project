@@ -185,3 +185,28 @@ class DebugShapefileView(DetailView):
             'geojson_sample': json.dumps(geojson_data, indent=2)
         })
         return context
+
+@method_decorator(csrf_exempt, name='dispatch')
+class CutPolygonView(View):
+    def post(self, request, pk):
+        try:
+            shapefile = Shapefile.objects.get(pk=pk)
+            data = json.loads(request.body)
+            feature_id = data.get('feature_id')
+            cut_line = data.get('cut_line', [])
+
+            print(f"Cut request for shapefile {pk}, feature {feature_id}")
+
+            success, message = shapefile.cut_polygon(feature_id, cut_line)
+
+            return JsonResponse({
+                'success': success,
+                'message': message,
+                'has_processed_data': shapefile.geojson_data_processed is not None
+            })
+
+        except Shapefile.DoesNotExist:
+            return JsonResponse({'success': False, 'message': 'Shapefile not found'}, status=404)
+        except Exception as e:
+            print(f"Cut error: {e}")
+            return JsonResponse({'success': False, 'message': str(e)}, status=500)

@@ -8,5 +8,6 @@ urlpatterns = [
     path('shapefile/<int:pk>/geojson/', views.ShapefileGeoJSONView.as_view(), name='get_shapefile_geojson'),
     path('shapefile/<int:pk>/geojson/processed/', views.ShapefileProcessedGeoJSONView.as_view(), name='get_shapefile_geojson_processed'),
     path('shapefile/<int:pk>/merge/', views.MergePolygonsView.as_view(), name='merge_polygons'),
+    path('shapefile/<int:pk>/cut_polygon/', views.CutPolygonView.as_view(), name='cut_polygon'),
     path('debug/<int:pk>/', views.DebugShapefileView.as_view(), name='debug_shapefile'),
 ]
