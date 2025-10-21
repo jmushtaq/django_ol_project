@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
 
   <script src="{% static 'js/polygon_cutting.js' %}"></script>
+  <script src="{% static 'js/merge_polygon.js' %}"></script>
 
   <style>
     .map {
@@ -310,8 +311,9 @@
 
   <script src="https://cdn.jsdelivr.net/npm/ol@8.2.0/dist/ol.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-<script>
+</body>
 
+<script>
     // Debug function to show cutting state
     function updateCuttingDebug() {
         const debugInfo = document.getElementById('cutting-debug-info');
@@ -349,21 +351,8 @@
     const shapefileLayers = {};
     const selectedFeatures = new Map(); // shapefileId -> Set of feature IDs
 
-    // Selection style
-    const selectStyle = new ol.style.Style({
-        stroke: new ol.style.Stroke({
-            color: 'yellow',
-            width: 4
-        }),
-        fill: new ol.style.Fill({
-            color: 'rgba(255, 255, 0, 0.3)'
-        })
-    });
-
-    // Update the select interaction to only select from processed layers
     // Create select interaction (update to allow selection from both layers for cutting)
     const selectInteraction = new ol.interaction.Select({
-        style: selectStyle,
         condition: ol.events.condition.click,
         layers: function(layer) {
             // Allow selection from both layers, but cutting will only use processed
@@ -371,51 +360,9 @@
                 Object.values(shapefileLayers).includes(layer);
         }
     });
-//    const selectInteraction = new ol.interaction.Select({
-//        style: selectStyle,
-//        condition: ol.events.condition.click,
-//        layers: function(layer) {
-//            // Only select from processed vector layers
-//            return layer instanceof ol.layer.Vector && 
-//                Object.keys(shapefileLayers).some(key => 
-//                    key.endsWith('_processed') && shapefileLayers[key] === layer
-//                );
-//        }
-//    });
 
     // Add select interaction to map
     map.addInteraction(selectInteraction);
-
-    // Update selection handler to only process processed layer features
-    selectInteraction.on('select', function(e) {
-        e.selected.forEach(function(feature) {
-            const shapefileId = feature.get('shapefileId');
-            const featureId = feature.get('featureId');
-            const layerType = feature.get('layerType');
-            
-            // Only allow selection from processed layers
-            if (layerType === 'processed') {
-                if (!selectedFeatures.has(shapefileId)) {
-                    selectedFeatures.set(shapefileId, new Set());
-                }
-                selectedFeatures.get(shapefileId).add(featureId);
-            } else {
-                // Remove selection from original layers
-                selectInteraction.getFeatures().remove(feature);
-            }
-        });
-        
-        e.deselected.forEach(function(feature) {
-            const shapefileId = feature.get('shapefileId');
-            const featureId = feature.get('featureId');
-            
-            if (selectedFeatures.has(shapefileId)) {
-                selectedFeatures.get(shapefileId).delete(featureId);
-            }
-        });
-        
-        updateAllSelectionInfo();
-    });
 
     // Function to show status messages
     function showStatusMessage(message, type = 'info') {
@@ -519,8 +466,39 @@
 
                 // Add feature IDs and metadata for selection
                 vectorSource.getFeatures().forEach((feature, index) => {
-                    //feature.set('featureId', index.toString());
-                    feature.set('featureId', feature.id_.toString());
+
+                    let featureId;
+                    
+                    // First try to get ID from feature properties
+                    const properties = feature.getProperties();
+                    if (properties && properties.id !== undefined) {
+                        featureId = properties.id.toString();
+                    } else if (properties && properties.ID !== undefined) {
+                        featureId = properties.ID.toString();
+                    } else if (properties && properties.fid !== undefined) {
+                        featureId = properties.fid.toString();
+                    } else if (properties && properties.FID !== undefined) {
+                        featureId = properties.FID.toString();
+                    } else if (properties && properties.ogc_fid !== undefined) {
+                        featureId = properties.ogc_fid.toString();
+                    } 
+                    // For merged polygons, use merged features info
+                    else if (properties && properties.merged_features !== undefined) {
+                        featureId = `merged_${shapefileId}_${index}`;
+                    }
+                    // For cut polygons, use original feature info
+                    else if (properties && properties.original_feature !== undefined) {
+                        featureId = properties.original_feature.toString();
+                    }
+                    // Fallback to index or OpenLayers internal ID
+                    else if (feature.id_ !== undefined) {
+                        featureId = feature.id_.toString();
+                    } else {
+                        // Final fallback - use index
+                        featureId = index.toString();
+                    }
+
+                    feature.set('featureId', featureId);
                     feature.set('shapefileId', shapefileId.toString());
                     feature.set('layerType', layerType);
                 });
@@ -553,7 +531,10 @@
                     selectedFeatures.set(shapefileId.toString(), new Set());
                 }
                 
-                updateAllSelectionInfo();
+                if (typeof polygonMerger !== 'undefined') {
+                    polygonMerger.updateAllSelectionInfo();
+                }
+                
                 if (vectorSource.getFeatures().length > 0) {
                     zoomToLayer(vectorLayer);
                 }
@@ -571,173 +552,7 @@
             });
     }
 
-    // Function to update selection info for all shapefiles
-    function updateAllSelectionInfo() {
-        // Clear existing selection info
-        document.querySelectorAll('.selection-info').forEach(el => el.remove());
-        
-        // Update for each shapefile with processed data
-        selectedFeatures.forEach((selectedSet, shapefileId) => {
-            const selectionCount = selectedSet.size;
-            const hasProcessedLayer = shapefileLayers.hasOwnProperty(`${shapefileId}_processed`);
-            
-            if (selectionCount > 0 && hasProcessedLayer) {
-                const infoElement = document.createElement('div');
-                infoElement.id = `selection-info-${shapefileId}`;
-                infoElement.className = 'selection-info small text-muted mt-1';
-                
-                const canMerge = selectionCount >= 2;
-                const mergeButtonClass = canMerge ? 'btn-success' : 'btn-secondary';
-                const mergeButtonDisabled = !canMerge ? 'disabled' : '';
-                const tooltipText = canMerge ? '' : 'Must select at least two polygons';
-                
-                infoElement.innerHTML = `
-                    <div><strong>Processed Layer Selection:</strong></div>
-                    <div>Selected: ${selectionCount} polygon(s)</div>
-                    <button class="btn ${mergeButtonClass} btn-sm mt-1 merge-btn" 
-                            ${mergeButtonDisabled}
-                            onclick="mergeSelectedPolygons(${shapefileId})"
-                            data-bs-toggle="tooltip" 
-                            data-bs-title="${tooltipText}">
-                        Merge Selected
-                    </button>
-                    <button class="btn btn-secondary btn-sm mt-1" onclick="clearSelection(${shapefileId})">
-                        Clear
-                    </button>
-                `;
-                
-                const layerGroup = document.querySelector(`[id="layer${shapefileId}"]`).closest('.layer-group');
-                if (layerGroup) {
-                    layerGroup.appendChild(infoElement);
-                    
-                    // Initialize Bootstrap tooltips
-                    const tooltipTriggerList = [].slice.call(infoElement.querySelectorAll('[data-bs-toggle="tooltip"]'));
-                    tooltipTriggerList.map(function (tooltipTriggerEl) {
-                        return new bootstrap.Tooltip(tooltipTriggerEl);
-                    });
-                }
-            }
-        });
-        
-        // Show message if trying to select from original layer
-        const originalSelected = selectInteraction.getFeatures().getArray().some(feature => 
-            feature.get('layerType') === 'original'
-        );
-        
-        if (originalSelected) {
-            showStatusMessage('Selection is only allowed from processed (red) layers', 'warning');
-            // Clear selection from original layers
-            const originalFeatures = selectInteraction.getFeatures().getArray().filter(feature => 
-                feature.get('layerType') === 'original'
-            );
-            originalFeatures.forEach(feature => {
-                selectInteraction.getFeatures().remove(feature);
-            });
-        }
-    }
-
-    // Update merge function to show proper status messages
-    function mergeSelectedPolygons(shapefileId) {
-        const shapefileIdStr = shapefileId.toString();
-        
-        if (!selectedFeatures.has(shapefileIdStr) || selectedFeatures.get(shapefileIdStr).size < 2) {
-            showStatusMessage('Please select at least 2 polygons to merge from the processed layer', 'warning');
-            return;
-        }
-        
-        const selectedIds = Array.from(selectedFeatures.get(shapefileIdStr));
-        
-        console.log(`Attempting to merge shapefile ${shapefileId}, features: ${selectedIds}`);
-        
-        // Use GET request with URL parameters
-        const mergeUrl = `/shapefile/${shapefileId}/merge/?ids=${JSON.stringify(selectedIds)}`;
-        console.log(`Sending GET to: ${mergeUrl}`);
-        
-        showStatusMessage(`Merging polygons ${selectedIds.join(', ')}...`, 'info');
-        
-        fetch(mergeUrl, {
-            method: 'GET',
-            headers: {
-                'X-CSRFToken': getCookie('csrftoken')
-            }
-        })
-        .then(response => {
-            console.log(`Response status: ${response.status}`);
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            return response.json();
-        })
-        .then(data => {
-            console.log('Merge response:', data);
-            if (data.success) {
-                showStatusMessage(data.message, 'success');
-                // Clear current selection
-                clearSelection(shapefileId);
-                
-                // Reload the processed layer
-                removeShapefile(shapefileId, 'processed');
-                setTimeout(() => {
-                    const processedCheckbox = document.getElementById(`layer${shapefileId}_processed`);
-                    if (processedCheckbox) {
-                        processedCheckbox.checked = true;
-                        loadShapefile(shapefileId, 'processed');
-                    } else {
-                        // Create processed checkbox if it doesn't exist
-                        const layerGroup = document.querySelector(`[id="layer${shapefileId}"]`).closest('.layer-group');
-                        if (layerGroup) {
-                            const originalLabel = document.querySelector(`[for="layer${shapefileId}"]`).textContent;
-                            const processedHtml = `
-                                <div class="form-check ms-3">
-                                    <input class="form-check-input layer-checkbox" 
-                                        type="checkbox" 
-                                        value="${shapefileId}" 
-                                        id="layer${shapefileId}_processed"
-                                        data-layer-type="processed"
-                                        checked>
-                                    <label class="form-check-label" for="layer${shapefileId}_processed">
-                                        ${originalLabel.replace('(O)', '(P)')}
-                                    </label>
-                                </div>
-                            `;
-                            layerGroup.querySelector('.form-check').insertAdjacentHTML('afterend', processedHtml);
-                            loadShapefile(shapefileId, 'processed');
-                        }
-                    }
-                }, 500);
-            } else {
-                showStatusMessage(data.message, 'danger');
-            }
-        })
-        .catch(error => {
-            console.error('Merge error:', error);
-            showStatusMessage('Error merging polygons: ' + error.message, 'danger');
-        });
-    }
-
-    // Update clear selection to show info
-    function clearSelection(shapefileId) {
-        const shapefileIdStr = shapefileId.toString();
-        
-        if (selectedFeatures.has(shapefileIdStr)) {
-            selectedFeatures.get(shapefileIdStr).clear();
-            
-            // Clear selection from map
-            const selectedFeaturesArray = selectInteraction.getFeatures().getArray();
-            const featuresToDeselect = selectedFeaturesArray.filter(feature => 
-                feature.get('shapefileId') === shapefileIdStr
-            );
-            
-            featuresToDeselect.forEach(feature => {
-                selectInteraction.getFeatures().remove(feature);
-            });
-            
-            updateAllSelectionInfo();
-            showStatusMessage('Selection cleared', 'info');
-        }
-    }
-
-    // Update function to remove shapefile layer (with annotation cleanup)
+    // Function to remove shapefile layer (with annotation cleanup)
     function removeShapefile(shapefileId, layerType = 'original') {
         const layerKey = `${shapefileId}_${layerType}`;
         if (shapefileLayers[layerKey]) {
@@ -752,7 +567,9 @@
             }
             
             // Clear selection for this shapefile
-            clearSelection(shapefileId);
+            if (typeof polygonMerger !== 'undefined') {
+                polygonMerger.clearSelection(shapefileId);
+            }
             
             // Update annotations after removal
             updateAnnotations();
@@ -797,7 +614,6 @@
     // Update map view change to refresh annotations (for zoom/pan)
     map.getView().on('change:center', updateAnnotations);
     map.getView().on('change:resolution', updateAnnotations);
-
 
     // Load all checked layers initially
     document.querySelectorAll('.layer-checkbox:checked').forEach(checkbox => {
@@ -845,28 +661,7 @@
         return cookieValue;
     }
 
-    // Update the debug info function
-    function updateDebugInfo() {
-        const debugInfo = document.getElementById('debug-info');
-        if (!debugInfo) return;
-        
-        const shapefileIds = Array.from(selectedFeatures.keys());
-        let mergeUrl = '';
-        
-        if (shapefileIds.length > 0) {
-            const firstShapefileId = shapefileIds[0];
-            const selectedIds = Array.from(selectedFeatures.get(firstShapefileId));
-            mergeUrl = `/shapefile/${firstShapefileId}/merge/?ids=${JSON.stringify(selectedIds)}`;
-        }
-        
-        debugInfo.innerHTML = `
-            Loaded shapefiles: ${Object.keys(shapefileLayers).join(', ')}<br>
-            Selected features: ${JSON.stringify(Array.from(selectedFeatures.entries()))}<br>
-            Merge URL: ${mergeUrl}
-        `;
-    }
-
-    // Function to check if only one layer is visible (keep existing)
+    // Function to check if only one layer is visible
     function getVisibleLayersCount() {
         let count = 0;
         Object.values(shapefileLayers).forEach(layer => {
@@ -958,7 +753,6 @@
                 }
                 
                 console.log(`Creating annotations for ${geojsonData.features.length} features from API`);
-                console.log('Sample feature:', geojsonData.features[0]);
                 
                 // Create annotations directly from the GeoJSON features
                 geojsonData.features.forEach((feature, index) => {
@@ -1044,23 +838,11 @@
                 shapefileLayers[annotationKey] = annotationLayer;
                 
                 console.log(`Created annotations for ${geojsonData.features.length} features in ${layerType} layer using actual feature IDs`);
-                console.log('Annotation IDs:', geojsonData.features.map((f, i) => {
-                    let id = i;
-                    if (f.properties) {
-                        if (f.properties.id !== undefined) id = f.properties.id;
-                        else if (f.properties.original_feature !== undefined) id = f.properties.original_feature;
-                    }
-                    if (f.id !== undefined) id = f.id;
-                    return id;
-                }));
             })
             .catch(error => {
                 console.error(`Error fetching GeoJSON for annotations:`, error);
-                // Fallback: use OpenLayers feature indices if API fails
-                createFallbackAnnotations(shapefileId, layerType, sourceLayer.getSource().getFeatures(), annotationSource, annotationKey);
             });
     }
-
 
     // Annotation toggle functionality
     let annotationsEnabled = true;
@@ -1086,39 +868,20 @@
             showStatusMessage('Annotations disabled', 'info');
         }
     });
-    // Polygon Merge Functionality - ENDS HERE
 
-    // Polygon Cutting Functionality - STARTS HERE
-
-    // Initialize polygon cutter after map is created
-//    document.addEventListener('DOMContentLoaded', function() {
-//        initializePolygonCutter(map);
-//    });
-
-//    let polygonCutter = null;
-
-//    document.addEventListener('DOMContentLoaded', function() {
-//        console.log('DOM fully loaded, initializing Polygon Cutter...');
-//        // ... existing initialization code ...
-//        
-//        // Initialize polygon cutter
-//        polygonCutter = new PolygonCutter(
-//            map, 
-//            shapefileLayers, 
-//            selectedFeatures, 
-//            selectInteraction, 
-//            showStatusMessage
-//        );
-//        
-//        // ... rest of existing code ...
-//    });
-
+    // Initialize functionality after DOM is ready
     document.addEventListener('DOMContentLoaded', function() {
-        // ... existing initialization code ...
+        // Initialize polygon merger
+        polygonMerger = new PolygonMerger(
+            map, 
+            shapefileLayers, 
+            selectedFeatures, 
+            selectInteraction, 
+            showStatusMessage
+        );
         
-        // Wait a bit for the DOM to be fully ready
+        // Initialize polygon cutter
         setTimeout(() => {
-            // Initialize polygon cutter
             polygonCutter = new PolygonCutter(
                 map, 
                 shapefileLayers, 
@@ -1127,11 +890,7 @@
                 showStatusMessage
             );
         }, 100);
-        
-        // ... rest of existing code ...
     });
-    // Polygon Cutting Functionality - ENDS HERE
 </script>
-</body>
 
 </html>
