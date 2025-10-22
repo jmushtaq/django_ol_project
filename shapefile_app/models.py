@@ -225,6 +225,8 @@ class Shapefile(models.Model):
             #self.geojson_data_processed = processed_data
             #import ipdb; ipdb.set_trace()
             gdf_rejoin = gpd.GeoDataFrame(pd.concat([gdf_partitioned, gdf_excl_single], ignore_index=True))
+            gdf_rejoin.reset_index(drop=True, inplace=True)
+            gdf_rejoin['id'] = gdf_rejoin.index
             self.geojson_data_processed = json.loads(gdf_rejoin.set_crs(settings.CRS).to_json())
             self.save()
 
