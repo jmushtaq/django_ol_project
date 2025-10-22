@@ -1,0 +1,119 @@
+.map {
+    width: 100%;
+    height: 600px;
+}
+.layer-control {
+    position: absolute;
+    top: 8.5em;
+    left: 3.5em;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    z-index: 1000;
+    max-width: 250px;
+}
+.layer-control-header {
+    padding: 0.5em;
+    border-bottom: 1px solid #dee2e6;
+    background: rgba(248, 249, 250, 0.9);
+    font-weight: bold;
+    font-size: 0.9em;
+}
+.layer-control-body {
+    padding: 0.5em;
+    max-height: 400px;
+    overflow-y: auto;
+}
+.layer-group {
+    margin-bottom: 0.5em;
+    padding-bottom: 0.5em;
+    border-bottom: 1px solid #eee;
+}
+.layer-group:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+}
+.form-check {
+    margin-bottom: 0.25em;
+}
+.form-check-label {
+    font-size: 0.8em;
+}
+.btn-sm {
+    font-size: 0.7em;
+    padding: 0.2em 0.5em;
+}
+.layer-toggle {
+    position: absolute;
+    top: 9.5em;
+    left: 1.0em;
+    z-index: 1000;
+}
+.layer-toggle-btn {
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    width: 2em;
+    height: 2em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+.layer-toggle-btn:hover {
+    background: white;
+}
+.bi-layers {
+    font-size: 1em;
+}
+.selection-info {
+    background: rgba(248, 249, 250, 0.8);
+    padding: 0.5em;
+    border-radius: 3px;
+    border-left: 3px solid #28a745;
+}
+.annotation-toggle-btn:hover {
+    background: white !important;
+}
+
+.bi-123 {
+    font-size: 1em;
+}
+
+/* Cutting functionality styles */
+.cutting-toggle-btn:hover {
+    background: white !important;
+    color: #dc3545 !important;
+}
+
+.bi-scissors {
+    font-size: 1em;
+}
+
+.cutting-panel .btn {
+    margin-right: 0.25em;
+    margin-bottom: 0.25em;
+}
+
+.cutting-instructions div {
+    margin-bottom: 0.25em;
+}
+
+.cutting-status div {
+    margin-bottom: 0.25em;
+    padding: 0.25em;
+    border-radius: 3px;
+    background: rgba(0,0,0,0.05);
+}
+
+/* Status message styles */
+.status-message {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 10000;
+    min-width: 300px;
+    max-width: 500px;
+}

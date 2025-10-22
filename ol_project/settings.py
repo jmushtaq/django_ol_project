@@ -43,7 +43,7 @@ ROOT_URLCONF = 'ol_project.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [os.path.join(BASE_DIR, 'shapefile_app', 'templates', 'shapefile_app')],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
